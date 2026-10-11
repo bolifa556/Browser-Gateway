@@ -1,0 +1,14 @@
+data
+vpn
+backups
+release
+data-*
+extension
+policies
+tmp
+node_modules
+.env
+.git
+*.tar
+*.log
+*.png

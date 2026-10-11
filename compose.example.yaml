@@ -1,0 +1,54 @@
+name: browser-gateway
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: local/browser-gateway:1.3.9
+    restart: unless-stopped
+    user: "1007:1007"
+    init: true
+    env_file:
+      - .env
+    environment:
+      PORT: "3003"
+      DATA_ROOT: /app/data
+      HOME: /app/data/home
+      TMPDIR: /app/data/tmp
+      XDG_CACHE_HOME: /app/data/cache
+      XDG_CONFIG_HOME: /app/data/config
+      UPSTREAM_PROXY: "${UPSTREAM_PROXY:-none}"
+      CHATGPT_URL: "${CHATGPT_URL:-https://example.org/}"
+      STREAM_MAX_FPS: "${STREAM_MAX_FPS:-60}"
+      STREAM_MAX_WIDTH: "${STREAM_MAX_WIDTH:-8192}"
+      STREAM_MAX_HEIGHT: "${STREAM_MAX_HEIGHT:-4320}"
+      MAX_ACTIVE_SESSIONS: "${MAX_ACTIVE_SESSIONS:-12}"
+      PUBLIC_HOST: "${PUBLIC_HOST:-}"
+      ACME_ENABLED: "${ACME_ENABLED:-false}"
+      HTTPS_REDIRECT: "${HTTPS_REDIRECT:-false}"
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${HOST_PORT:-3003}:3003/tcp"
+    volumes:
+      - ./data:/app/data:Z
+      - ./data/tmp:/tmp:Z
+    read_only: true
+    shm_size: 4gb
+    pids_limit: 4096
+    ulimits:
+      core:
+        soft: 0
+        hard: 0
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: none
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3003/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 90s

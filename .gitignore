@@ -1,0 +1,53 @@
+# Runtime data, accounts, proxy credentials and private deployment files.
+/data/
+/data-*/
+/vpn/
+/backups/
+/release/
+/tmp/
+/.env
+/.env.*
+!/.env.example
+/docker-compose.yml
+/docker-compose.override.yml
+/compose.yml
+/compose.yaml
+/compose.override.yml
+/compose.override.yaml
+
+# Dependencies, generated build outputs and retired implementation assets.
+/node_modules/
+/vendor/chrome.deb
+/vendor/.chrome.deb.*
+/public/qoi.wasm
+/public/QOI-LICENSE.txt
+/capture
+/native-input
+/extension/
+/policies/
+
+# Private diagnostics, test output, archives and certificates.
+/_diag/
+/test-results/
+/coverage/
+*.log
+*.har
+*.pcap
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.deb
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Local editor and operating-system files.
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
