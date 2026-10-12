@@ -10,6 +10,7 @@ import { BrowserManager } from './browser-manager.js';
 import { config } from './config.js';
 import { Logger } from './logger.js';
 import { cookie, parseCookies, safeEqual, seal, sessionId, unseal } from './security.js';
+import { installVisibilityLease } from './visibility-lease.js';
 import { StateStore } from './state-store.js';
 import {CertificateManager,createGateway} from './tls.js';
 
@@ -162,7 +163,7 @@ app.get('/favicon.ico', (_request, response) => {
 });
 
 app.get('/healthz', (_request, response) => {
-  response.json({ ok: true, browser: Boolean(browserManager.context||browserManager.nativeLogin&&!browserManager.nativeLogin.exited), mode:browserManager.mode, version: '1.3.9', transport: 'lossless-qoi' });
+  response.json({ ok: true, browser: Boolean(browserManager.context||browserManager.nativeLogin&&!browserManager.nativeLogin.exited), mode:browserManager.mode, version: '1.4.0', transport: 'lossless-qoi' });
 });
 
 app.get('/', (request, response) => {
@@ -300,6 +301,8 @@ gateway.plain.on('upgrade',upgrade);gateway.secure.on('upgrade',upgrade);
 websocketServer.on('connection', (socket, request) => {
   const principal = request.principal;
   let session = null;
+  installVisibilityLease(socket);
+  socket.on('background-idle',()=>session?.removeClient(socket));
   socket.isAlive = true;
   socket.on('pong', () => {
     socket.isAlive = true;

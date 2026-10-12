@@ -10,6 +10,8 @@ import { startNetworkDiagnostic } from './network-diagnostic.js';
 import { FrameFlow } from './frame-flow.js';
 import { measureRender } from './render-diagnostic.js';
 import { waitForPaint } from './paint-ready.js';
+import { TOUCH_INPUT_BRIDGE } from './touch-bridge.js';
+import { windowInsets } from './window-insets.js';
 
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const filename=v=>String(v||'download').normalize('NFKC').replace(/[\\/:*?"<>|\u0000-\u001f]/g,'_').replace(/^\.+/,'').slice(0,180)||'download';
@@ -77,7 +79,13 @@ export class BrowserManager {
     await this.context.exposeBinding('__gptWebCursor',({page},cursor)=>{
       const session=this.pageOwners.get(page);if(session?.page===page&&session.cursor!==cursor){session.cursor=cursor;session.broadcast({type:'cursor',cursor});}
     });
+    await this.context.exposeBinding('__gptWebInputState',({page,frame},value)=>{
+      const session=this.pageOwners.get(page);if(session?.page!==page)return false;
+      if(value?.initialized)return Boolean(session.touchEnabled);
+      return session.updateInputState(frame,value);
+    });
     await this.context.addInitScript({content:CLIPBOARD_BRIDGE});await this.context.addInitScript({content:NATIVE_SELECT_BRIDGE});
+    await this.context.addInitScript({content:TOUCH_INPUT_BRIDGE});
     this.context.on('page',page=>void this.adoptPopup(page));
     this.context.on('close',()=>{if(!this.stopping&&!this.closingBrowser){this.logger.error('browser_closed');setTimeout(()=>process.exit(1),100).unref();}});
     this.bootstrap=this.context.pages()[0];for(const page of this.context.pages().slice(1))await page.close().catch(()=>{});
@@ -130,7 +138,7 @@ export class BrowserManager {
   requestEncoder(session){
     if(session===this.nativeLogin){if(this.mode==='native-login')session.startCapture();return;}
     if(this.mode!=='normal'||this.stopping)return;
-    if(!session.page||session.page.isClosed()||session.layoutBusy||session.closing||session.minimized)return;
+    if(!session.clients.size||!session.page||session.page.isClosed()||session.layoutBusy||session.closing||session.minimized)return;
     const active=Math.max(1,[...this.sessions.values()].filter(s=>s.clients.size).length);
     const workers=Math.max(2,Math.floor(32/active));
     const signature=`${session.captureTitle}:${session.frameWidth}:${session.frameHeight}:${session.chromeLeft}:${session.chromeTop}:${workers}`;
@@ -213,7 +221,7 @@ class PageSession {
     if(this.page===page)return;
     await this.resizeQueue.catch(()=>{});clearTimeout(this.layoutTimer);this.layoutBusy=true;
     this.manager.stopEncoder(this);await this.cdp?.detach().catch(()=>{});
-    this.page=page;this.cursor='default';this.pages.push(page);this.manager.pageOwners.set(page,this);
+    this.page=page;this.cursor='default';this.inputStates=new Map();this.pages.push(page);this.manager.pageOwners.set(page,this);
     this.cdp=await this.manager.context.newCDPSession(page);
     const info=await this.cdp.send('Target.getTargetInfo');
     const window=await this.manager.browserCdp.send('Browser.getWindowForTarget',{targetId:info.targetInfo.targetId});
@@ -228,7 +236,7 @@ class PageSession {
       const update=()=>{if(!document.title.startsWith(title))document.title=`${title} | ${document.title}`;};
       update();if(document.querySelector('title'))new MutationObserver(update).observe(document.querySelector('title'),{childList:true,subtree:true,characterData:true});
     },{key:this.streamKey,title:this.captureTitle}).catch(()=>{});
-    await register();page.on('domcontentloaded',()=>{void register();if(this.page===page)this.scheduleLayoutCalibration();});
+    await register();page.on('domcontentloaded',()=>{void register();if(this.page===page){this.scheduleLayoutCalibration();void this.configureTouchBridge();}});
     page.on('framenavigated',frame=>{if(frame!==page.mainFrame())return;void register();if(/^https?:/.test(frame.url()))this.manager.store.update(this.key,{lastUrl:frame.url(),role:this.role});});
     page.on('download',download=>void this.manager.handleDownload(this,download));
     page.on('filechooser',async chooser=>{
@@ -250,14 +258,40 @@ class PageSession {
   retryNavigation(url){clearTimeout(this.navigationTimer);this.navigationTimer=setTimeout(()=>{if(!this.closing&&this.clients.size)void this.page.goto(url,{waitUntil:'domcontentloaded'}).catch(()=>this.retryNavigation(url));},5000);this.navigationTimer.unref();}
   addClient(socket){
     clearTimeout(this.disconnectTimer);
-    if(this.minimized){this.minimized=false;void this.manager.browserCdp.send('Browser.setWindowBounds',{windowId:this.windowId,bounds:{windowState:'normal'}}).then(()=>this.scheduleLayoutCalibration(0)).catch(()=>{});}
+    if(this.minimized){
+      this.minimized=false;this.layoutBusy=true;
+      this.resizeQueue=this.resizeQueue.catch(()=>{}).then(async()=>{
+        try{
+          if(this.closing)return;
+          await this.cdp.send('Emulation.setScriptExecutionDisabled',{value:false}).catch(()=>{});
+          await this.cdp.send('Page.setWebLifecycleState',{state:'active'}).catch(()=>{});
+          await this.manager.browserCdp.send('Browser.setWindowBounds',{windowId:this.windowId,bounds:{windowState:'normal'}}).catch(()=>{});
+        }finally{this.layoutBusy=false;if(!this.closing){this.scheduleLayoutCalibration(0);this.manager.requestEncoder(this);}}
+      });
+    }
     this.clients.add(socket);socket._socket?.setNoDelay(true);this.lastActive=Date.now();send(socket,this.ready());send(socket,{type:'cursor',cursor:this.cursor||'default'});if(this.streamInfo)send(socket,this.streamInfo);
+    this.broadcastInputState();
     this.frameFlow?.reset();for(const session of this.manager.sessions.values())if(session.clients.size)this.manager.requestEncoder(session);
   }
   removeClient(socket){
-    this.clients.delete(socket);this.frameFlow?.remove(socket);this.lastActive=Date.now();
+    if(!this.clients.delete(socket))return;this.frameFlow?.remove(socket);this.lastActive=Date.now();
     if(this.closing||this.manager.stopping||this.manager.mode!=='normal')return;
-    if(!this.clients.size){clearTimeout(this.disconnectTimer);this.disconnectTimer=setTimeout(()=>{if(!this.clients.size){this.manager.stopEncoder(this);this.minimized=true;void this.manager.browserCdp.send('Browser.setWindowBounds',{windowId:this.windowId,bounds:{windowState:'minimized'}}).catch(()=>{});}},1000);this.disconnectTimer.unref();}
+    if(!this.clients.size){
+      clearTimeout(this.disconnectTimer);this.disconnectTimer=setTimeout(()=>{
+        if(this.clients.size||this.closing)return;
+        this.manager.stopEncoder(this);this.minimized=true;
+        this.resizeQueue=this.resizeQueue.catch(()=>{}).then(async()=>{
+          if(this.clients.size||this.closing)return;
+          await this.manager.browserCdp.send('Browser.setWindowBounds',{windowId:this.windowId,bounds:{windowState:'minimized'}}).catch(()=>{});
+          if(!this.clients.size){
+            await this.cdp.send('Page.setWebLifecycleState',{state:'frozen'}).catch(()=>{});
+            // The automation driver keeps a synthetic foreground state for
+            // independent windows. Explicitly stop script execution as well.
+            await this.cdp.send('Emulation.setScriptExecutionDisabled',{value:true}).catch(()=>{});
+          }
+        });
+      },1000);this.disconnectTimer.unref();
+    }
     if(!this.manager.stopping)for(const session of this.manager.sessions.values())if(session.clients.size)this.manager.requestEncoder(session);
   }
   attachEncoder(socket){
@@ -290,8 +324,33 @@ class PageSession {
     if(!this.page||this.page.isClosed())return;
     try{
       await this.resizeQueue.catch(()=>{});
+      // Touch taps focus the remote control at touchEnd. A local software
+      // keyboard may commit before that asynchronous dispatch has completed.
+      if(['text','key','composition'].includes(m.type))await this.touchQueue?.catch(()=>{});
       switch(m.type){
+        case 'touch':{
+          if(!['touchStart','touchMove','touchEnd','touchCancel'].includes(m.eventType))break;
+          if(!Array.isArray(m.points)||m.points.length>10)break;
+          const touchPoints=m.points.map(p=>({id:Number(p.id),x:Number(p.x)*this.dpr,y:Number(p.y)*this.dpr}));
+          if(touchPoints.some(p=>!Number.isInteger(p.id)||p.id<0||p.id>9||!Number.isFinite(p.x)||!Number.isFinite(p.y)))break;
+          if(new Set(touchPoints.map(p=>p.id)).size!==touchPoints.length)break;
+          if(['touchEnd','touchCancel'].includes(m.eventType)&&touchPoints.length)break;
+          this.touchQueue=(this.touchQueue||Promise.resolve()).catch(()=>{}).then(()=>this.cdp.send('Input.dispatchTouchEvent',{type:m.eventType,touchPoints}));
+          await this.touchQueue;
+          if(m.eventType==='touchEnd'||m.eventType==='touchCancel')void this.selectionAndAnchor();
+          break;
+        }
+        case 'touch-select':{
+          const x=Number(m.x),y=Number(m.y);if(!Number.isFinite(x)||!Number.isFinite(y))break;
+          this.touchQueue=(this.touchQueue||Promise.resolve()).catch(()=>{}).then(async()=>{
+            if(await this.selectableAtPoint(x,y)){
+              await this.cdp.send('Input.dispatchMouseEvent',{type:'mousePressed',x:x*this.dpr,y:y*this.dpr,button:'left',buttons:1,clickCount:2});
+              void this.selectionAndAnchor();
+            }
+          });await this.touchQueue;break;
+        }
         case 'mouse':
+          if(this.touchQueue)await this.touchQueue.catch(()=>{});
           await this.cdp.send('Input.dispatchMouseEvent',{type:m.eventType,x:(Number(m.x)||0)*this.dpr,y:(Number(m.y)||0)*this.dpr,button:m.button||'none',buttons:Number(m.buttons)||0,clickCount:Number(m.clickCount)||0,modifiers:Number(m.modifiers)||0});
           if(m.eventType==='mouseReleased')void this.selectionAndAnchor();break;
         case 'wheel':{
@@ -315,14 +374,15 @@ class PageSession {
       }
     }catch(error){this.manager.logger.warn('input_failed',{type:m.type,error});}
   }
-  async resize({width,height,deviceScaleFactor}){
-    const w=Math.max(320,Math.min(8192,Math.round(Number(width)||1280))),h=Math.max(240,Math.min(4320,Math.round(Number(height)||800)));
+  async resize({width,height,deviceScaleFactor,touch=false}){
+    const w=Math.max(320,Math.min(8192,Math.round(Number(width)||1280))),h=Math.max(128,Math.min(4320,Math.round(Number(height)||800)));
     const requestedDpr=Math.max(.5,Math.min(4,Number(deviceScaleFactor)||1));
     const dpr=Math.min(requestedDpr,this.manager.config.streamMaxWidth/w,this.manager.config.streamMaxHeight/h);
-    if(w===this.width&&h===this.height&&dpr===this.dpr)return;
-    this.width=w;this.height=h;this.dpr=dpr;this.frameWidth=Math.round(w*dpr);this.frameHeight=Math.round(h*dpr);
+    const touchEnabled=touch===true;
+    if(w===this.width&&h===this.height&&dpr===this.dpr&&touchEnabled===Boolean(this.touchEnabled))return;
+    this.width=w;this.height=h;this.dpr=dpr;this.touchEnabled=touchEnabled;this.frameWidth=Math.round(w*dpr);this.frameHeight=Math.round(h*dpr);
     this.layoutBusy=true;this.manager.stopEncoder(this);
-    try{await this.setWindowSize();await this.setPageMetrics();this.streamInfo=null;this.broadcast(this.ready());}
+    try{await this.setWindowSize();await this.setPageMetrics();this.streamInfo=null;this.broadcast(this.ready());this.broadcastInputState();}
     finally{this.layoutBusy=false;}
     this.manager.requestEncoder(this);
     if(dpr!==requestedDpr)this.broadcast({type:'notice',message:'当前屏幕像素超过服务上限，已限制到8K范围'});
@@ -334,8 +394,8 @@ class PageSession {
     // valid when browser UI (e.g. an infobar) appears after the initial page.
     await browserCdp.send('Browser.setContentsSize',{windowId,width:this.frameWidth,height:this.frameHeight});
     const {bounds}=await browserCdp.send('Browser.getWindowBounds',{windowId});
-    const horizontal=Math.max(0,bounds.width-this.frameWidth),vertical=Math.max(0,bounds.height-this.frameHeight);
-    const left=Math.floor(horizontal/2),right=horizontal-left,bottom=left,top=Math.max(0,vertical-bottom);
+    const {horizontal,vertical,left,right,bottom,top}=windowInsets(bounds,this.frameWidth,this.frameHeight,this.windowHorizontalInset||0);
+    this.windowHorizontalInset=horizontal;
     const changed=this.chromeLeft!==left||this.chromeRight!==right||this.chromeTop!==top||this.chromeBottom!==bottom;
     Object.assign(this,{chromeLeft:left,chromeRight:right,chromeTop:top,chromeBottom:bottom});
     if(changed)this.manager.logger.info('window_insets',{id:this.id,horizontal,vertical,left,top,bottom});
@@ -350,7 +410,7 @@ class PageSession {
         this.layoutBusy=true;
         try{
           if(await this.setWindowSize()){
-            this.manager.stopEncoder(this);await this.setPageMetrics();this.streamInfo=null;this.broadcast(this.ready());
+            this.manager.stopEncoder(this);await this.setPageMetrics();this.streamInfo=null;this.broadcast(this.ready());this.broadcastInputState();
           }
         }catch(error){this.manager.logger.warn('window_calibration_failed',{id:this.id,error});}
         finally{this.layoutBusy=false;if(this.clients.size)this.manager.requestEncoder(this);}
@@ -359,12 +419,60 @@ class PageSession {
   }
   async setPageMetrics(){
     await this.cdp.send('Emulation.setDeviceMetricsOverride',{width:this.width,height:this.height,deviceScaleFactor:this.dpr,scale:this.dpr,dontSetVisibleSize:true,mobile:false,screenWidth:this.width,screenHeight:this.height});
+    await this.cdp.send('Emulation.setTouchEmulationEnabled',{enabled:Boolean(this.touchEnabled),maxTouchPoints:10});
+    await this.configureTouchBridge();
     // CDP's logical viewport and the native widget's visible extent are separate.
     // Keep the physical widget full-sized instead of clipping it to CSS pixels.
     await this.cdp.send('Emulation.setVisibleSize',{width:this.frameWidth,height:this.frameHeight});
     // CDP acknowledges geometry before the renderer has painted the new native
     // surface. Do not seed a lossless delta stream from its previous backing.
     if(!await waitForPaint(this.page))this.manager.logger.info('paint_wait_interrupted',{id:this.id});
+  }
+  async configureTouchBridge(){
+    await Promise.all((this.page?.frames()||[]).map(frame=>frame.evaluate(enabled=>globalThis.__gptWebSetTouchInput?.(enabled),Boolean(this.touchEnabled)).catch(()=>{})));
+  }
+  async selectableAtPoint(x,y){
+    let frame=this.page.mainFrame();
+    for(let depth=0;depth<12;depth++){
+      const element=await frame.evaluateHandle(({x,y})=>document.elementFromPoint(x,y),{x,y});
+      const child=await element.asElement()?.contentFrame().catch(()=>null);
+      if(!child){await element.dispose();break;}
+      const offset=await element.evaluate(e=>{const r=e.getBoundingClientRect();return {x:r.x+e.clientLeft,y:r.y+e.clientTop};});
+      await element.dispose();x-=offset.x;y-=offset.y;frame=child;
+    }
+    return frame.evaluate(({x,y})=>{
+      const element=document.elementFromPoint(x,y);if(!element)return false;
+      if(element.isContentEditable||element instanceof HTMLTextAreaElement)return !element.disabled;
+      if(element instanceof HTMLInputElement)return !element.disabled&&['text','search','email','url','tel','number','password'].includes(element.type);
+      if(getComputedStyle(element).userSelect==='none')return false;
+      const position=document.caretPositionFromPoint?.(x,y),caret=position?null:document.caretRangeFromPoint?.(x,y);
+      const node=position?.offsetNode||caret?.startContainer,offset=position?.offset??caret?.startOffset;
+      if(node?.nodeType!==Node.TEXT_NODE||!node.parentElement||getComputedStyle(node.parentElement).userSelect==='none')return false;
+      for(const start of [offset-1,offset]){
+        if(start<0||start>=node.length)continue;
+        const range=document.createRange();range.setStart(node,start);range.setEnd(node,start+1);
+        if([...range.getClientRects()].some(r=>x>=r.left&&x<=r.right&&y>=r.top&&y<=r.bottom))return true;
+      }
+      return false;
+    },{x,y});
+  }
+  async updateInputState(frame,value){
+    if(this.closing||!Array.isArray(value?.fields)||frame.isDetached())return;
+    let x=0,y=0;
+    if(frame!==this.page.mainFrame()){
+      const element=await frame.frameElement(),box=await element.boundingBox();await element.dispose();
+      if(!box)return;x=box.x;y=box.y;
+    }
+    const fields=value.fields.slice(0,64).filter(f=>[f.x,f.y,f.width,f.height].every(Number.isFinite)&&f.width>0&&f.height>0)
+      .map(f=>({x:f.x+x,y:f.y+y,width:f.width,height:f.height,multiline:Boolean(f.multiline),focused:Boolean(f.focused),
+        inputMode:['none','text','decimal','numeric','tel','search','email','url'].includes(f.inputMode)?f.inputMode:'text',
+        enterKeyHint:['enter','done','go','next','previous','search','send'].includes(f.enterKeyHint)?f.enterKeyHint:'enter'}));
+    this.inputStates?.set(frame,fields);this.broadcastInputState();
+  }
+  broadcastInputState(){
+    const frames=new Set(this.page?.frames()||[]),fields=[];
+    for(const [frame,entries]of this.inputStates||[]){if(!frames.has(frame)){this.inputStates.delete(frame);continue;}fields.push(...entries);}
+    this.broadcast({type:'input-state',width:this.width,height:this.height,fields:fields.slice(0,128)});
   }
   async selectionAndAnchor(){
     try{

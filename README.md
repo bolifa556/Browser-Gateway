@@ -11,7 +11,7 @@ keyboard, pointer, clipboard, and file interactions back to their own remote
 window. No client extension, VNC application, or replacement website UI is
 required.
 
-**Current source baseline:** 1.3.9 · Node.js 22+ · Linux amd64 · Docker Compose
+**Current source baseline:** 1.4.0 · Node.js 22+ · Linux amd64 · Docker Compose
 
 ## Contents
 
@@ -36,11 +36,13 @@ required.
 | Lossless display | RGB capture, QOI encoding, WebAssembly decoding, and WebSocket DEFLATE preserve captured pixels without lossy video compression. |
 | Responsive resolution | The remote viewport follows client dimensions and device pixel ratio, subject to configured physical-pixel limits. |
 | Familiar input | Pointer cursors, text selection, dragging, wheel input, keyboard shortcuts, and IME composition are bridged to the remote page. |
+| Touchscreen input | Finger taps and swipes use server Chrome's touch gesture handling; software keyboard edits and visible-viewport changes are bridged independently of desktop mouse input. |
 | Clipboard and files | Text and supported rich clipboard content, image paste, drag-and-drop upload, file selection, and downloads are bridged where the target site supports them. |
 | Shared persistent state | Browser cookies, storage, and profile state persist across container replacement; users share that profile, not separate accounts. |
 | Administrator login workspace | An exclusive, browser-toolbar-visible workspace supports manual sign-in using the same profile and network configuration. |
 | Workload-aware capture | Changed regions are captured incrementally; unchanged frames are skipped, disconnected windows stop capture, and encoder workers are apportioned across active sessions. |
 | Reconnection and flow control | Automatic client reconnect, ordered frame acknowledgements, and a bounded two-frame pipeline prevent unbounded frame queues. |
+| Background resource saving | A tab hidden for one minute disconnects automatically, stops capture, and suspends its member page scripts. Returning reconnects to the same session until the normal disconnected-session retention expires. |
 | Controlled network egress | Optional upstream browser proxy configuration centralizes outbound access on the server. |
 | Containerized operation | Non-root application user, read-only container root filesystem, project-local application data, health checks, and configurable retention. |
 
@@ -54,7 +56,7 @@ limits, not guaranteed performance figures.
   in a real browser instead of being reimplemented in a separate frontend.
 - **Preserve text and UI detail.** Lossless RGB transport avoids the chroma loss
   associated with common 4:2:0 video streams.
-- **Simplify client access.** A compatible desktop browser is sufficient; clients
+- **Simplify client access.** A compatible desktop or touchscreen browser is sufficient; clients
   do not need access to the server's upstream proxy or browser installation.
 - **Centralize browser state.** One managed profile provides consistent cookies,
   installed fonts, and outbound network configuration.
@@ -98,6 +100,8 @@ DOM to the client and not a fully isolated, multi-tenant browser service.
 - Sufficient CPU, memory, and bandwidth for the chosen resolution and number of
   users. The current rendering/capture path is CPU-based; a GPU is not required.
 - A client browser supporting Canvas, WebSocket, and WebAssembly SIMD.
+  Touchscreen clients also need Pointer Events; platform clipboard permissions
+  and native file dialogs remain controlled by the client browser.
 - The pinned browser installer described in [vendor/README.md](vendor/README.md).
 
 The commands below are for a **new deployment**. An existing deployment must
@@ -177,7 +181,7 @@ Configuration is read from the private `.env` and Compose environment.
 | `STREAM_MAX_FPS` | `60` | Capture-rate ceiling; accepted range 30–120. |
 | `STREAM_MAX_WIDTH` / `STREAM_MAX_HEIGHT` | `8192` / `4320` | Maximum physical frame dimensions, including device pixel ratio. |
 | `MAX_ACTIVE_SESSIONS` | `12` | Maximum concurrent remote sessions; accepted range 1–12. |
-| `SESSION_IDLE_MINUTES` | `60` | Cleanup threshold for disconnected sessions. |
+| `SESSION_IDLE_MINUTES` | `60` | Retention of disconnected remote sessions; separate from the fixed one-minute hidden-tab disconnect. |
 | `MAX_UPLOAD_MB` | `500` | Per-file upload limit; up to 10 files per request. |
 | `DOWNLOAD_TTL_MINUTES` | `60` | Temporary download retention. |
 | `LOG_RETENTION_DAYS` | `7` | Application-log retention. |
@@ -202,6 +206,19 @@ automatically. Each client tab has its own remote input/window session.
 Use supported website interactions as usual: select and copy text, type with an
 IME, paste text or images, drag files onto a compatible upload area, use a
 website's file chooser, and save supported downloads locally.
+
+Switching to another tab or hiding the browser starts a one-minute grace period.
+After that, the gateway pauses its connection, capture, and member-page scripts;
+returning reconnects automatically. The remote page and draft remain in memory
+until `SESSION_IDLE_MINUTES` expires or capacity requires reclaiming an inactive
+session; after reclamation, the last saved URL is loaded using the shared profile.
+A visible tab does not disconnect merely because you stop typing.
+
+On a touch device, tap an editable field to use the software keyboard, swipe to
+scroll, or hold text to select a word and drag to extend the selection. The
+visible viewport follows orientation changes and keyboard resizing. Native
+file selection may require a second tap if the client browser rejects opening
+the picker after the network round trip.
 
 ### Administrator workspace
 
@@ -308,6 +325,13 @@ pointer batching/drag state, paint readiness, transport compression, diagnostic
 filtering, and favicon wiring. Integration fixtures cover viewport/DPR mapping,
 IME and clipboard input, file transfer, independent windows, and administrator
 login transitions.
+
+`tests/mobile-e2e.mjs` exercises simulated phone/tablet touch input, orientation,
+keyboard-sized viewports, long-press selection, and files. `tests/background-e2e.mjs`
+uses normal Chrome tab visibility and waits through the actual one-minute grace
+period to verify suspension, capture release, and reconnection. These are browser
+simulations; device keyboards and operating-system dialogs require device-specific
+acceptance where available.
 
 Run interaction tests only against a **disposable fixture deployment with its
 own profile and data directory**, not a production shared account. Performance

@@ -11,7 +11,7 @@ start.addEventListener('click',async()=>{
     await change('start',{confirm:true,viewport:{width:stage.clientWidth,height:stage.clientHeight,deviceScaleFactor:devicePixelRatio||1}});
     finish.hidden=false;status.textContent='请人工完成 ChatGPT / Google 登录，然后恢复成员页面';
     document.querySelector('#connection').textContent='正在连接手动登录窗口…';
-    await import('./app.js?v=1.3.8');
+    await import('./app.js?v=1.4.0');
   }catch(e){error.textContent=e.message;error.hidden=false;start.disabled=false;start.textContent='开始手动登录';}
 });
 finish.addEventListener('click',async()=>{
