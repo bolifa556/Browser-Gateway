@@ -1,8 +1,9 @@
-import {installPointerInput} from './pointer-input.js?v=1.4.0';
-import {installTouchInput} from './touch-input.js?v=1.4.0';
-import {installImeInput} from './ime-input.js?v=1.4.0';
-import {installVisibilityLifecycle} from './visibility-lifecycle.js?v=1.4.0';
-const canvas=document.querySelector('#screen'),ctx=canvas.getContext('2d',{alpha:false,desynchronized:true,colorSpace:'srgb'});
+import {installPointerInput} from './pointer-input.js?v=1.4.1';
+import {installTouchInput} from './touch-input.js?v=1.4.1';
+import {installImeInput} from './ime-input.js?v=1.4.1';
+import {installVisibilityLifecycle} from './visibility-lifecycle.js?v=1.4.1';
+const touchDisplay=navigator.maxTouchPoints>0&&matchMedia('(pointer:coarse)').matches;
+const canvas=document.querySelector('#screen'),ctx=canvas.getContext('2d',{alpha:false,desynchronized:!touchDisplay,colorSpace:'srgb'});
 const ime=document.querySelector('#ime'),picker=document.querySelector('#file-picker'),connection=document.querySelector('#connection'),notice=document.querySelector('#notice');
 const stage=document.querySelector('#stage'),nativeLogin=document.body.dataset.mode==='native-login';
 let maintenanceMessage='';

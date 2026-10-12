@@ -163,7 +163,7 @@ app.get('/favicon.ico', (_request, response) => {
 });
 
 app.get('/healthz', (_request, response) => {
-  response.json({ ok: true, browser: Boolean(browserManager.context||browserManager.nativeLogin&&!browserManager.nativeLogin.exited), mode:browserManager.mode, version: '1.4.0', transport: 'lossless-qoi' });
+  response.json({ ok: true, browser: Boolean(browserManager.context||browserManager.nativeLogin&&!browserManager.nativeLogin.exited), mode:browserManager.mode, version: '1.4.1', transport: 'lossless-qoi' });
 });
 
 app.get('/', (request, response) => {

@@ -9,7 +9,7 @@
 无损像素画面，并将键盘、鼠标、剪贴板和文件操作传递给自己的远程窗口。
 无需安装客户端扩展、VNC 软件，也无需为原网站重写一套界面。
 
-**当前源码基线：** 1.4.0 · Node.js 22+ · Linux amd64 · Docker Compose
+**当前源码基线：** 1.4.1 · Node.js 22+ · Linux amd64 · Docker Compose
 
 ## 目录
 

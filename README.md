@@ -11,7 +11,7 @@ keyboard, pointer, clipboard, and file interactions back to their own remote
 window. No client extension, VNC application, or replacement website UI is
 required.
 
-**Current source baseline:** 1.4.0 · Node.js 22+ · Linux amd64 · Docker Compose
+**Current source baseline:** 1.4.1 · Node.js 22+ · Linux amd64 · Docker Compose
 
 ## Contents
 

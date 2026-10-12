@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: local/browser-gateway:1.4.0
+    image: local/browser-gateway:1.4.1
     restart: unless-stopped
     user: "1007:1007"
     init: true

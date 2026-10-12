@@ -55,8 +55,22 @@ async function interactions(device,label){
   const selected=await waitState(id,s=>s.selection.length>0,'long press text selection');
   const copied=await page.evaluate(()=>{const data=new DataTransfer();document.dispatchEvent(new ClipboardEvent('copy',{clipboardData:data,bubbles:true,cancelable:true}));return data.getData('text/plain');});
   assert.equal(copied,selected.selection,'mobile selection copy');
-  const geometry=await page.evaluate(()=>({canvas:[document.querySelector('canvas').width,document.querySelector('canvas').height],stage:[document.querySelector('#stage').clientWidth,document.querySelector('#stage').clientHeight]}));
-  await fs.mkdir(`${root}/check-results`,{recursive:true});await page.screenshot({path:`${root}/check-results/${label}.png`});
+  const geometry=await page.evaluate(()=>{
+    const canvas=document.querySelector('canvas'),stage=document.querySelector('#stage'),visual=visualViewport;
+    const data=canvas.getContext('2d').getImageData(0,0,canvas.width,Math.min(700,canvas.height)).data;let ink=0;
+    for(let n=0;n<data.length;n+=16)if(data[n]<220||data[n+1]<220||data[n+2]<220)ink++;
+    return {canvas:[canvas.width,canvas.height],stage:[stage.clientWidth,stage.clientHeight],stageRect:stage.getBoundingClientRect().toJSON(),
+      visual:[visual.width,visual.height,visual.offsetLeft,visual.offsetTop,visual.scale],scroll:[scrollX,scrollY],ink};
+  });
+  assert.ok(geometry.ink>500,'decoded canvas must contain the fixture');
+  await fs.mkdir(`${root}/check-results`,{recursive:true});const screenshot=await page.screenshot({path:`${root}/check-results/${label}.png`});
+  const presentedInk=await page.evaluate(async data=>{
+    const img=new Image();img.src=data;await img.decode();const surface=document.createElement('canvas');surface.width=img.width;surface.height=Math.min(700,img.height);
+    const ctx=surface.getContext('2d');ctx.drawImage(img,0,0);const pixels=ctx.getImageData(0,0,surface.width,surface.height).data;let ink=0;
+    for(let n=0;n<pixels.length;n+=16)if(pixels[n]<220||pixels[n+1]<220||pixels[n+2]<220)ink++;return ink;
+  },`data:image/png;base64,${screenshot.toString('base64')}`);
+  assert.ok(presentedInk>500,'composited mobile screenshot must contain the rendered page');geometry.presentedInk=presentedInk;
+  await fs.writeFile(`${root}/check-results/${label}-canvas.png`,Buffer.from(await page.evaluate(()=>document.querySelector('canvas').toDataURL().split(',')[1]),'base64'));
   return {geometry,functions:['tap','software-text','delete','Chinese-IME','multiline','filechooser','download','scroll','reverse-scroll','dropdown','long-press-selection','selection-copy']};
 }
 try{
