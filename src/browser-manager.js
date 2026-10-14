@@ -377,13 +377,14 @@ class PageSession {
       }
     }catch(error){this.manager.logger.warn('input_failed',{type:m.type,error});}
   }
-  async resize({width,height,deviceScaleFactor,touch=false}){
+  async resize({width,height,deviceScaleFactor,touch=false,touchPrimary=touch}){
     const w=Math.max(320,Math.min(8192,Math.round(Number(width)||1280))),h=Math.max(128,Math.min(4320,Math.round(Number(height)||800)));
     const requestedDpr=Math.max(.5,Math.min(4,Number(deviceScaleFactor)||1));
     const dpr=Math.min(requestedDpr,this.manager.config.streamMaxWidth/w,this.manager.config.streamMaxHeight/h);
     const touchEnabled=touch===true;
-    if(w===this.width&&h===this.height&&dpr===this.dpr&&touchEnabled===Boolean(this.touchEnabled))return;
-    this.width=w;this.height=h;this.dpr=dpr;this.touchEnabled=touchEnabled;this.frameWidth=Math.round(w*dpr);this.frameHeight=Math.round(h*dpr);
+    const primaryTouch=touchEnabled&&touchPrimary===true;
+    if(w===this.width&&h===this.height&&dpr===this.dpr&&touchEnabled===Boolean(this.touchEnabled)&&primaryTouch===Boolean(this.touchPrimary))return;
+    this.width=w;this.height=h;this.dpr=dpr;this.touchEnabled=touchEnabled;this.touchPrimary=primaryTouch;this.frameWidth=Math.round(w*dpr);this.frameHeight=Math.round(h*dpr);
     this.layoutBusy=true;this.manager.stopEncoder(this);
     try{await this.setWindowSize();await this.setPageMetrics();this.streamInfo=null;this.broadcast(this.ready());this.broadcastInputState();}
     finally{this.layoutBusy=false;}
@@ -422,7 +423,11 @@ class PageSession {
   }
   async setPageMetrics(){
     await this.cdp.send('Emulation.setDeviceMetricsOverride',{width:this.width,height:this.height,deviceScaleFactor:this.dpr,scale:this.dpr,dontSetVisibleSize:true,mobile:false,screenWidth:this.width,screenHeight:this.height});
-    await this.cdp.send('Emulation.setTouchEmulationEnabled',{enabled:Boolean(this.touchEnabled),maxTouchPoints:10});
+    // Enabling touch emulation also switches Chromium's hover/pointer media
+    // queries to touch-only. Use the client's primary pointer, not the presence
+    // of a touchscreen. CDP touch events still work on hybrid mouse desktops;
+    // their editable/keyboard bridge stays enabled via touchEnabled below.
+    await this.cdp.send('Emulation.setTouchEmulationEnabled',{enabled:Boolean(this.touchPrimary),maxTouchPoints:10});
     await this.configureTouchBridge();
     // CDP's logical viewport and the native widget's visible extent are separate.
     // Keep the physical widget full-sized instead of clipping it to CSS pixels.

@@ -2,7 +2,8 @@ import {installPointerInput} from './pointer-input.js?v=1.4.1';
 import {installTouchInput} from './touch-input.js?v=1.4.1';
 import {installImeInput} from './ime-input.js?v=1.4.1';
 import {installVisibilityLifecycle} from './visibility-lifecycle.js?v=1.4.1';
-const touchDisplay=navigator.maxTouchPoints>0&&matchMedia('(pointer:coarse)').matches;
+import {inputCapabilities} from './input-capabilities.js?v=1.4.3';
+const touchDisplay=inputCapabilities().touchPrimary;
 const canvas=document.querySelector('#screen'),ctx=canvas.getContext('2d',{alpha:false,desynchronized:!touchDisplay,colorSpace:'srgb'});
 const ime=document.querySelector('#ime'),picker=document.querySelector('#file-picker'),connection=document.querySelector('#connection'),notice=document.querySelector('#notice');
 const stage=document.querySelector('#stage'),nativeLogin=document.body.dataset.mode==='native-login';
@@ -19,7 +20,7 @@ const send=m=>{if(socket?.readyState===1)socket.send(JSON.stringify(m));};
 const toast=text=>{notice.textContent=text;notice.hidden=false;clearTimeout(noticeTimer);noticeTimer=setTimeout(()=>{notice.hidden=true;},2500);};
 const point=e=>{const r=stage.getBoundingClientRect();return {x:(e.clientX-r.left)*remoteWidth/Math.max(1,r.width),y:(e.clientY-r.top)*remoteHeight/Math.max(1,r.height)};};
 const modifiers=e=>(e.altKey?1:0)|(e.ctrlKey?2:0)|(e.metaKey?4:0)|(e.shiftKey?8:0);
-const coarse=()=>navigator.maxTouchPoints>0&&matchMedia('(pointer:coarse)').matches;
+const coarse=()=>inputCapabilities().touchPrimary;
 const focus=()=>{if(!coarse())ime.focus({preventScroll:true});};
 const configureInput=field=>{
   inputField=field||{};ime.readOnly=false;
@@ -36,9 +37,10 @@ function legacyCopy(){
 }
 function viewport(){
   layoutStage();if(!ready||document.hidden)return;
-  const width=Math.max(320,stage.clientWidth),height=Math.max(128,stage.clientHeight),deviceScaleFactor=devicePixelRatio||1,touch=navigator.maxTouchPoints>0;
-  const signature=`${width}:${height}:${deviceScaleFactor}:${touch}`;if(signature===viewportSignature)return;viewportSignature=signature;
-  send({type:'viewport',width,height,deviceScaleFactor,touch});
+  const width=Math.max(320,stage.clientWidth),height=Math.max(128,stage.clientHeight),deviceScaleFactor=devicePixelRatio||1;
+  const {touch,touchPrimary}=inputCapabilities();
+  const signature=`${width}:${height}:${deviceScaleFactor}:${touch}:${touchPrimary}`;if(signature===viewportSignature)return;viewportSignature=signature;
+  send({type:'viewport',width,height,deviceScaleFactor,touch,touchPrimary});
 }
 async function draw(packet,current){
   if(maintenanceMessage||socket!==current||lifecycle.suspended)return;
