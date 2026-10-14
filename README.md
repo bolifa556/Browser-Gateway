@@ -11,7 +11,7 @@ keyboard, pointer, clipboard, and file interactions back to their own remote
 window. No client extension, VNC application, or replacement website UI is
 required.
 
-**Current source baseline:** 1.4.1 · Node.js 22+ · Linux amd64 · Docker Compose
+**Current source baseline:** 1.4.2 · Node.js 22+ · Linux amd64 · Docker Compose
 
 ## Contents
 
@@ -43,6 +43,7 @@ required.
 | Workload-aware capture | Changed regions are captured incrementally; unchanged frames are skipped, disconnected windows stop capture, and encoder workers are apportioned across active sessions. |
 | Reconnection and flow control | Automatic client reconnect, ordered frame acknowledgements, and a bounded two-frame pipeline prevent unbounded frame queues. |
 | Background resource saving | A tab hidden for one minute disconnects automatically, stops capture, and suspends its member page scripts. Returning reconnects to the same session until the normal disconnected-session retention expires. |
+| Idle browser retention | A minimized blank window keeps the shared browser alive when all member sessions expire. It does not load a website, capture frames, or occupy a member slot. |
 | Controlled network egress | Optional upstream browser proxy configuration centralizes outbound access on the server. |
 | Containerized operation | Non-root application user, read-only container root filesystem, project-local application data, health checks, and configurable retention. |
 

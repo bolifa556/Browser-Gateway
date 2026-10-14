@@ -12,6 +12,7 @@ import { measureRender } from './render-diagnostic.js';
 import { waitForPaint } from './paint-ready.js';
 import { TOUCH_INPUT_BRIDGE } from './touch-bridge.js';
 import { windowInsets } from './window-insets.js';
+import { createBrowserKeepalive } from './browser-keepalive.js';
 
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const filename=v=>String(v||'download').normalize('NFKC').replace(/[\\/:*?"<>|\u0000-\u001f]/g,'_').replace(/^\.+/,'').slice(0,180)||'download';
@@ -20,7 +21,7 @@ const send=(socket,message)=>{if(socket?.readyState===1)socket.send(JSON.stringi
 export class BrowserManager {
   constructor(config,store,logger){
     Object.assign(this,{config,store,logger});this.sessions=new Map();this.byId=new Map();this.pageOwners=new Map();
-    this.downloads=new Map();this.creating=new Map();this.context=null;this.stopping=false;this.mode='normal';
+    this.downloads=new Map();this.creating=new Map();this.context=null;this.keepalive=null;this.stopping=false;this.mode='normal';
   }
   async start(){
     for(const directory of [this.config.profileDir,this.config.uploadDir,this.config.downloadDir])await fsp.mkdir(directory,{recursive:true,mode:0o700});
@@ -87,8 +88,10 @@ export class BrowserManager {
     await this.context.addInitScript({content:CLIPBOARD_BRIDGE});await this.context.addInitScript({content:NATIVE_SELECT_BRIDGE});
     await this.context.addInitScript({content:TOUCH_INPUT_BRIDGE});
     this.context.on('page',page=>void this.adoptPopup(page));
-    this.context.on('close',()=>{if(!this.stopping&&!this.closingBrowser){this.logger.error('browser_closed');setTimeout(()=>process.exit(1),100).unref();}});
+    this.context.on('close',()=>{this.keepalive=null;if(!this.stopping&&!this.closingBrowser){this.logger.error('browser_closed');setTimeout(()=>process.exit(1),100).unref();}});
     this.bootstrap=this.context.pages()[0];for(const page of this.context.pages().slice(1))await page.close().catch(()=>{});
+    this.keepalive=await createBrowserKeepalive(this.browserCdp);
+    this.logger.info('browser_keepalive_ready',{minimized:true});
     this.mode='normal';
     this.logger.info('browser_started',{transport:'lossless-qoi',fps:this.config.streamMaxFps});
   }
