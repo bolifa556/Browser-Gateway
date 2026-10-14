@@ -163,7 +163,7 @@ app.get('/favicon.ico', (_request, response) => {
 });
 
 app.get('/healthz', (_request, response) => {
-  response.json({ ok: true, browser: Boolean(browserManager.context||browserManager.nativeLogin&&!browserManager.nativeLogin.exited), mode:browserManager.mode, version: '1.4.3', transport: 'lossless-qoi' });
+  response.json({ ok: true, browser: Boolean(browserManager.context||browserManager.nativeLogin&&!browserManager.nativeLogin.exited), mode:browserManager.mode, version: '1.4.4', transport: 'lossless-qoi' });
 });
 
 app.get('/', (request, response) => {
@@ -225,7 +225,7 @@ app.post(
         request.principal.sessionKey,
         files,
         request.body?.chooserId || '',
-        { x: request.body?.x, y: request.body?.y, mode: request.body?.mode },
+        { x: request.body?.x, y: request.body?.y, mode: request.body?.mode, dragId: request.body?.dragId },
       );
       response.json({ ok: true, method });
     } catch (error) {

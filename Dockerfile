@@ -24,7 +24,7 @@ RUN --mount=type=bind,source=vendor/chrome.deb,target=/tmp/google-chrome-stable.
     echo 'c58aa0f2cd66179c9f050e062c882d27aa9b9f8c2b7c73fee3498560b5ed0b38  /tmp/google-chrome-stable.deb' | sha256sum -c - \
     && apt-get update && apt-get install -y --no-install-recommends openbox fonts-noto-core fonts-noto-cjk curl openssl libxcomposite1 libxdamage1 libxdo3 /tmp/google-chrome-stable.deb \
     && rm -rf /var/lib/apt/lists/* /ms-playwright
-LABEL org.opencontainers.image.title="gpt-web" org.opencontainers.image.version="1.4.3"
+LABEL org.opencontainers.image.title="gpt-web" org.opencontainers.image.version="1.4.4"
 COPY src/fontconfig.xml /etc/fonts/conf.d/99-gpt-web.conf
 RUN fc-cache -f
 RUN groupadd --gid 1007 gptweb && useradd --uid 1007 --gid 1007 --home-dir /app/data/home --no-create-home gptweb

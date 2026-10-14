@@ -3,6 +3,7 @@ import {installTouchInput} from './touch-input.js?v=1.4.1';
 import {installImeInput} from './ime-input.js?v=1.4.1';
 import {installVisibilityLifecycle} from './visibility-lifecycle.js?v=1.4.1';
 import {inputCapabilities} from './input-capabilities.js?v=1.4.3';
+import {installFileDrag} from './file-drag.js?v=1.4.4';
 const touchDisplay=inputCapabilities().touchPrimary;
 const canvas=document.querySelector('#screen'),ctx=canvas.getContext('2d',{alpha:false,desynchronized:!touchDisplay,colorSpace:'srgb'});
 const ime=document.querySelector('#ime'),picker=document.querySelector('#file-picker'),connection=document.querySelector('#connection'),notice=document.querySelector('#notice');
@@ -109,7 +110,7 @@ function start(){
     if(m.type==='diagnostic-render')globalThis.dispatchEvent(new CustomEvent('gpt-render',{detail:m}));
   };
   current.onclose=event=>{
-    if(socket!==current)return;socket=null;ready=false;pressed.clear();pointer.reset();touch.reset();imeInput.reset();selection='';selectionHtml='';inputFields=[];canvas.style.cursor='default';lastSequence=0;
+    if(socket!==current)return;socket=null;ready=false;pressed.clear();pointer.reset();touch.reset();fileDrag.reset();imeInput.reset();selection='';selectionHtml='';inputFields=[];canvas.style.cursor='default';lastSequence=0;
     if(event.code===4001&&document.hidden)lifecycle.suspend();
     if(!lifecycle.canConnect())return;
     connection.textContent=maintenanceMessage||'连接已断开，正在重连…';connection.hidden=false;stats.connectionState='reconnecting';
@@ -143,19 +144,19 @@ document.addEventListener('keydown',e=>{
 document.addEventListener('keyup',e=>{if(imeInput.composing||e.isComposing)return;if(pressed.has(e.code)){e.preventDefault();pressed.delete(e.code);send(key(e,'keyUp'));}});
 document.addEventListener('copy',e=>{if(ready){e.preventDefault();e.clipboardData.setData('text/plain',selection);if(selectionHtml)e.clipboardData.setData('text/html',selectionHtml);}});
 document.addEventListener('cut',e=>{if(!ready)return;e.preventDefault();e.clipboardData.setData('text/plain',selection);send({type:'key',eventType:'keyDown',key:'x',code:'KeyX',keyCode:88,modifiers:2});send({type:'key',eventType:'keyUp',key:'x',code:'KeyX',keyCode:88,modifiers:2});});
-async function upload(files,mode='drop',p={x:remoteWidth/2,y:remoteHeight/2},chooser=''){
-  if(!files.length)return;const body=new FormData();for(const file of files)body.append('files',file,file.name||`clipboard-${Date.now()}.png`);body.append('mode',mode);body.append('x',p.x);body.append('y',p.y);if(chooser)body.append('chooserId',chooser);
+async function upload(files,mode='drop',p={x:remoteWidth/2,y:remoteHeight/2},chooser='',dragId=''){
+  if(!files.length)return;const body=new FormData();for(const file of files)body.append('files',file,file.name||`clipboard-${Date.now()}.png`);body.append('mode',mode);body.append('x',p.x);body.append('y',p.y);if(chooser)body.append('chooserId',chooser);if(dragId)body.append('dragId',dragId);
   try{const response=await fetch('/api/upload',{method:'POST',headers:{'X-Gpt-Tab':tab},body});const result=await response.json();if(!response.ok)throw Error(result.error||'Upload failed');}catch(error){toast(`文件传输失败：${error.message}`);}finally{focus();}
 }
 document.addEventListener('paste',e=>{if(!ready)return;e.preventDefault();const files=Array.from(e.clipboardData?.files||[]);if(files.length){void upload(files,'paste');return;}const text=e.clipboardData?.getData('text/plain');if(text)send({type:'text',text});});
-canvas.addEventListener('dragenter',e=>e.preventDefault());canvas.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='copy';});canvas.addEventListener('drop',e=>{e.preventDefault();focus();void upload(Array.from(e.dataTransfer.files),'drop',point(e));});
+const fileDrag=installFileDrag(document,{send,point,ready:()=>ready&&!nativeLogin,onDrop:(files,p,id)=>{focus();return upload(files,'drop',p,'',id);},unavailable:()=>toast(nativeLogin?'请返回成员页面上传文件':'页面尚未连接，请连接后重新拖入文件')});
 picker.addEventListener('change',()=>{const id=chooserId;chooserId='';chooserPending=false;void upload(Array.from(picker.files),'chooser',undefined,id);picker.value='';});
 picker.addEventListener('cancel',()=>{chooserId='';chooserPending=false;});
 const resize=()=>{layoutStage();clearTimeout(resizeTimer);resizeTimer=setTimeout(viewport,60);};
 window.addEventListener('resize',resize);window.addEventListener('orientationchange',resize);
 window.visualViewport?.addEventListener('resize',resize);window.visualViewport?.addEventListener('scroll',resize);
 function releaseInputs(){
-  pointer.release();touch.release();for(const down of pressed.values())send({...down,eventType:'keyUp',text:'',modifiers:0});pressed.clear();
+  pointer.release();touch.release();fileDrag.release();for(const down of pressed.values())send({...down,eventType:'keyUp',text:'',modifiers:0});pressed.clear();
   if(imeInput.composing)send({type:'composition',text:''});
 }
 function suspendConnection(){

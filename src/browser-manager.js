@@ -13,6 +13,8 @@ import { waitForPaint } from './paint-ready.js';
 import { TOUCH_INPUT_BRIDGE } from './touch-bridge.js';
 import { windowInsets } from './window-insets.js';
 import { createBrowserKeepalive } from './browser-keepalive.js';
+import { RemoteFileDrag } from './file-drag.js';
+import { startUploadDiagnostic } from './upload-diagnostic.js';
 
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const filename=v=>String(v||'download').normalize('NFKC').replace(/[\\/:*?"<>|\u0000-\u001f]/g,'_').replace(/^\.+/,'').slice(0,180)||'download';
@@ -223,9 +225,10 @@ class PageSession {
   async attachPage(page){
     if(this.page===page)return;
     await this.resizeQueue.catch(()=>{});clearTimeout(this.layoutTimer);this.layoutBusy=true;
-    this.manager.stopEncoder(this);await this.cdp?.detach().catch(()=>{});
+    this.manager.stopEncoder(this);this.uploadDiagnosticStop?.();await this.fileDrag?.close().catch(()=>{});await this.cdp?.detach().catch(()=>{});
     this.page=page;this.cursor='default';this.inputStates=new Map();this.pages.push(page);this.manager.pageOwners.set(page,this);
     this.cdp=await this.manager.context.newCDPSession(page);
+    this.fileDrag=new RemoteFileDrag({cdp:this.cdp,directory:path.join(this.manager.config.uploadDir,crypto.createHash('sha256').update(this.key).digest('hex').slice(0,24)),geometry:()=>({width:this.width,height:this.height,dpr:this.dpr}),onError:error=>this.manager.logger.warn('drag_failed',{id:this.id,error})});
     const info=await this.cdp.send('Target.getTargetInfo');
     const window=await this.manager.browserCdp.send('Browser.getWindowForTarget',{targetId:info.targetInfo.targetId});
     if(this.windowId&&this.windowId!==window.windowId)await this.manager.browserCdp.send('Browser.setWindowBounds',{windowId:this.windowId,bounds:{windowState:'minimized'}}).catch(()=>{});
@@ -280,6 +283,7 @@ class PageSession {
     if(!this.clients.delete(socket))return;this.frameFlow?.remove(socket);this.lastActive=Date.now();
     if(this.closing||this.manager.stopping||this.manager.mode!=='normal')return;
     if(!this.clients.size){
+      void this.fileDrag?.cancel().catch(()=>{});
       clearTimeout(this.disconnectTimer);this.disconnectTimer=setTimeout(()=>{
         if(this.clients.size||this.closing)return;
         this.manager.stopEncoder(this);this.minimized=true;
@@ -331,6 +335,7 @@ class PageSession {
       // keyboard may commit before that asynchronous dispatch has completed.
       if(['text','key','composition'].includes(m.type))await this.touchQueue?.catch(()=>{});
       switch(m.type){
+        case 'file-drag':await this.fileDrag.handle(m);break;
         case 'touch':{
           if(!['touchStart','touchMove','touchEnd','touchCancel'].includes(m.eventType))break;
           if(!Array.isArray(m.points)||m.points.length>10)break;
@@ -508,13 +513,19 @@ class PageSession {
   }
   async applyUploadedFiles(files,chooserId,point={}){
     if(!files.length)throw Error('没有选中文件');const paths=files.map(f=>f.path);
+    await this.resizeQueue.catch(()=>{});await this.fileDrag?.cancel(point.dragId);
+    this.uploadDiagnosticStop?.();this.uploadDiagnosticStop=startUploadDiagnostic(this.page,this.manager.logger,this.id);
+    this.manager.logger.info('file_handoff_started',{session:this.id,mode:chooserId?'chooser':point.mode||'drop',files:files.length,bytes:files.reduce((sum,file)=>sum+file.size,0)});
     if(chooserId&&this.chooser?.id===chooserId&&this.chooser.expires>Date.now()){
       const {chooser}=this.chooser;this.chooser=null;await chooser.setFiles(paths);return 'filechooser';
     }
-    const x=(Number.isFinite(Number(point.x))?Number(point.x):this.width/2)*this.dpr,y=(Number.isFinite(Number(point.y))?Number(point.y):this.height/2)*this.dpr;
+    if(chooserId)throw Error('文件选择窗口已失效，请重新点击上传');
+    // Unlike the native mouse path, CDP file drags take CSS-pixel positions.
+    const x=Math.max(0,Math.min(this.width-1,Number.isFinite(Number(point.x))?Number(point.x):this.width/2)),y=Math.max(0,Math.min(this.height-1,Number.isFinite(Number(point.y))?Number(point.y):this.height/2));
     if(point.mode!=='paste'){
       const data={items:[],files:paths,dragOperationsMask:1};
-      for(const type of ['dragEnter','dragOver','drop'])await this.cdp.send('Input.dispatchDragEvent',{type,x,y,data});
+      try{for(const type of ['dragEnter','dragOver','drop'])await this.cdp.send('Input.dispatchDragEvent',{type,x,y,data});}
+      finally{await this.cdp.send('Input.cancelDragging').catch(()=>{});}
       return 'drop';
     }
     if(files.reduce((total,f)=>total+f.size,0)>50*1024*1024)throw Error('粘贴图片超过50MB，请直接拖入文件');
@@ -527,6 +538,8 @@ class PageSession {
   async close(){
     if(this.closing)return;this.closing=true;clearTimeout(this.retryTimer);clearTimeout(this.navigationTimer);clearTimeout(this.disconnectTimer);clearTimeout(this.ackTimer);clearTimeout(this.layoutTimer);clearInterval(this.layoutPoll);
     this.manager.stopEncoder(this);for(const client of this.clients)client.close(1001,'Session closed');
+    this.uploadDiagnosticStop?.();
+    await this.fileDrag?.close().catch(()=>{});
     await this.cdp?.detach().catch(()=>{});for(const page of this.pages){this.manager.pageOwners.delete(page);await page.close().catch(()=>{});}
     this.manager.sessions.delete(this.key);this.manager.byId.delete(this.id);
   }

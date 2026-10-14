@@ -1,12 +1,12 @@
 {
   "name": "gpt-web-remote-browser",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "private": true,
   "type": "module",
   "description": "Lossless, single-profile, independent-tab ChatGPT gateway",
   "scripts": {
     "start": "node src/server.js",
-    "check": "node --check src/server.js && node --check src/browser-manager.js && node --check src/browser-keepalive.js && node --check src/page-bridges.js && node --check src/touch-bridge.js && node --check src/visibility-lease.js && node --check src/paint-ready.js && node --check src/render-diagnostic.js && node --check src/native-login.js && node --check src/tls.js && node --check public/app.js && node --check public/input-capabilities.js && node --check public/pointer-input.js && node --check public/touch-input.js && node --check public/ime-input.js && node --check public/visibility-lifecycle.js && node --check public/native-login.js",
+    "check": "node --check src/server.js && node --check src/browser-manager.js && node --check src/browser-keepalive.js && node --check src/file-drag.js && node --check src/page-bridges.js && node --check src/touch-bridge.js && node --check src/visibility-lease.js && node --check src/paint-ready.js && node --check src/render-diagnostic.js && node --check src/native-login.js && node --check src/tls.js && node --check public/app.js && node --check public/file-drag.js && node --check public/input-capabilities.js && node --check public/pointer-input.js && node --check public/touch-input.js && node --check public/ime-input.js && node --check public/visibility-lifecycle.js && node --check public/native-login.js",
     "test": "node --test tests/*.test.mjs"
   },
   "engines": { "node": ">=22" },
